@@ -1,15 +1,15 @@
 {
   "name": "cloudshield-backend",
   "version": "1.0.0",
-  "description": "CloudShield HIDS Backend Server — Alert ingestion, threat log storage, and dashboard polling API.",
+  "description": "CloudShield HIDS — Express + SQLite3 backend for real-time threat dashboard",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
     "dev": "node --watch server.js"
   },
   "dependencies": {
-    "cors": "^2.8.6",
-    "express": "^4.22.2",
+    "express": "^4.21.0",
+    "cors": "^2.8.5",
     "sqlite3": "^5.1.7"
   }
 }
