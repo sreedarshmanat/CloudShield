@@ -1,0 +1,701 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CloudShield — Digital Seatbelt</title>
+<style>
+  :root{
+    --bg: #0a0e14;
+    --bg-panel: #10151f;
+    --bg-panel-raised: #151b28;
+    --line: #212a3a;
+    --text: #e6edf6;
+    --text-dim: #7c8aa3;
+    --text-faint: #4a5670;
+    --safe: #23ffb0;
+    --safe-dim: rgba(35,255,176,0.12);
+    --critical: #ff3b5c;
+    --critical-dim: rgba(255,59,92,0.14);
+    --accent: #4fd3ff;
+    --warn: #ffb84f;
+    --mono: 'SF Mono', 'IBM Plex Mono', 'Cascadia Code', Consolas, monospace;
+    --sans: -apple-system, 'Inter', 'Segoe UI', Helvetica, Arial, sans-serif;
+  }
+
+  *{ box-sizing: border-box; }
+  html,body{ height:100%; }
+  body{
+    margin:0;
+    background:
+      radial-gradient(circle at 50% -10%, #101b2b 0%, var(--bg) 55%);
+    color: var(--text);
+    font-family: var(--sans);
+    min-height:100vh;
+    padding: 32px 20px 60px;
+  }
+
+  .wrap{ max-width: 760px; margin: 0 auto; }
+
+  /* ---- header ---- */
+  header{
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    margin-bottom: 36px;
+  }
+  .brand{ display:flex; align-items:center; gap:10px; }
+  .brand-mark{
+    width: 26px; height: 26px;
+    border-radius: 7px;
+    background: linear-gradient(135deg, var(--safe), var(--accent));
+    display:flex; align-items:center; justify-content:center;
+    box-shadow: 0 0 18px rgba(35,255,176,0.35);
+    flex-shrink:0;
+  }
+  .brand-mark svg{ width:15px; height:15px; }
+  .brand-name{ font-weight: 650; font-size: 16px; letter-spacing: 0.2px; }
+  .brand-tag{
+    font-family: var(--mono);
+    font-size: 10.5px;
+    color: var(--text-faint);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    margin-top: 1px;
+  }
+  .conn-pill{
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--text-dim);
+    border: 1px solid var(--line);
+    border-radius: 100px;
+    padding: 6px 12px;
+    display:flex; align-items:center; gap:7px;
+    background: var(--bg-panel);
+  }
+  .conn-dot{
+    width:6px; height:6px; border-radius:50%;
+    background: var(--text-faint);
+    transition: background .3s ease, box-shadow .3s ease;
+  }
+  .conn-pill.live .conn-dot{ background: var(--safe); box-shadow: 0 0 6px var(--safe); }
+  .conn-pill.down .conn-dot{ background: var(--warn); box-shadow: 0 0 6px var(--warn); }
+
+  /* ---- status hero ---- */
+  .status-hero{
+    position: relative;
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    justify-content:center;
+    padding: 54px 20px 44px;
+    margin-bottom: 28px;
+  }
+
+  .ring-field{
+    position: relative;
+    width: 216px; height: 216px;
+    display:flex; align-items:center; justify-content:center;
+    margin-bottom: 26px;
+  }
+  .ring-echo{
+    position:absolute; inset:0;
+    border-radius:50%;
+    border: 1.5px solid var(--safe);
+    opacity: 0;
+  }
+  .ring-field.safe .ring-echo{
+    animation: echo-safe 3.2s ease-out infinite;
+  }
+  .ring-field.warn .ring-echo{
+    border-color: var(--warn);
+    animation: echo-warn 2s ease-out infinite;
+  }
+  .ring-field.critical .ring-echo{
+    border-color: var(--critical);
+    animation: echo-critical 1.15s ease-out infinite;
+  }
+  .ring-echo:nth-child(2){ animation-delay: 1.07s; }
+  .ring-field.warn .ring-echo:nth-child(2){ animation-delay: .7s; }
+  .ring-field.critical .ring-echo:nth-child(2){ animation-delay: .38s; }
+
+  @keyframes echo-safe{
+    0%{ transform: scale(0.82); opacity: 0.5; }
+    100%{ transform: scale(1.28); opacity: 0; }
+  }
+  @keyframes echo-warn{
+    0%{ transform: scale(0.82); opacity: 0.6; }
+    100%{ transform: scale(1.32); opacity: 0; }
+  }
+  @keyframes echo-critical{
+    0%{ transform: scale(0.82); opacity: 0.7; }
+    100%{ transform: scale(1.38); opacity: 0; }
+  }
+
+  .buckle{
+    position: relative;
+    width: 168px; height: 168px;
+    border-radius: 50%;
+    display:flex; align-items:center; justify-content:center;
+    background: radial-gradient(circle at 35% 30%, var(--bg-panel-raised), var(--bg-panel) 70%);
+    border: 1px solid var(--line);
+    transition: border-color .4s ease, box-shadow .5s ease;
+  }
+  .ring-field.safe .buckle{
+    border-color: rgba(35,255,176,0.4);
+    box-shadow: 0 0 40px -6px rgba(35,255,176,0.35), inset 0 0 30px rgba(35,255,176,0.06);
+    animation: breathe 3.2s ease-in-out infinite;
+  }
+  .ring-field.warn .buckle{
+    border-color: rgba(255,184,79,0.5);
+    box-shadow: 0 0 40px -6px rgba(255,184,79,0.4), inset 0 0 30px rgba(255,184,79,0.08);
+    animation: pulse-warn 1.6s ease-in-out infinite;
+  }
+  .ring-field.critical .buckle{
+    border-color: rgba(255,59,92,0.6);
+    box-shadow: 0 0 46px -4px rgba(255,59,92,0.55), inset 0 0 30px rgba(255,59,92,0.1);
+    animation: flash-buckle 0.85s steps(1,end) infinite;
+  }
+  @keyframes breathe{
+    0%,100%{ transform: scale(1); }
+    50%{ transform: scale(1.035); }
+  }
+  @keyframes pulse-warn{
+    0%,100%{ box-shadow: 0 0 40px -6px rgba(255,184,79,0.4), inset 0 0 30px rgba(255,184,79,0.08); }
+    50%{ box-shadow: 0 0 30px -4px rgba(255,184,79,0.65), inset 0 0 22px rgba(255,184,79,0.16); }
+  }
+  @keyframes flash-buckle{
+    0%,49%{ box-shadow: 0 0 46px -4px rgba(255,59,92,0.65), inset 0 0 30px rgba(255,59,92,0.14); }
+    50%,100%{ box-shadow: 0 0 20px -4px rgba(255,59,92,0.25), inset 0 0 14px rgba(255,59,92,0.05); }
+  }
+
+  .buckle-icon{ width: 62px; height: 62px; transition: color .3s ease; }
+  .ring-field.safe .buckle-icon{ color: var(--safe); }
+  .ring-field.warn .buckle-icon{ color: var(--warn); }
+  .ring-field.critical .buckle-icon{ color: var(--critical); }
+
+  .status-headline{
+    font-size: 26px;
+    font-weight: 650;
+    letter-spacing: -0.01em;
+    margin: 0 0 6px;
+    transition: color .3s ease;
+  }
+  .ring-field.safe ~ .status-headline,
+  .status-headline.safe{ color: var(--safe); }
+  .status-headline.warn{ color: var(--warn); }
+  .status-headline.critical{ color: var(--critical); }
+
+  .status-sub{
+    font-family: var(--mono);
+    font-size: 12.5px;
+    color: var(--text-dim);
+    letter-spacing: 0.03em;
+  }
+  .status-sub b{ color: var(--text); font-weight: 600; }
+
+  .threat-panel{
+    width: 100%;
+    max-width: 380px;
+    margin-top: 22px;
+    background: var(--bg-panel);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    padding: 16px 20px;
+    display: none;
+  }
+  .threat-panel.visible{ display: block; }
+  .threat-panel.critical{ border-color: rgba(255,59,92,0.35); }
+  .threat-panel.warn{ border-color: rgba(255,184,79,0.35); }
+  .threat-row{
+    display:flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 7px 0;
+    border-bottom: 1px solid rgba(33,42,58,0.6);
+    font-size: 13px;
+  }
+  .threat-row:last-child{ border-bottom:none; }
+  .threat-row span{ color: var(--text-faint); font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; font-weight: 650; }
+  .threat-row b{ font-family: var(--mono); text-align: right; }
+  .threat-row.severity b.critical{ color: var(--critical); }
+  .threat-row.severity b.warn{ color: var(--warn); }
+  .threat-row.recommendation b{ color: var(--text); font-family: var(--sans); font-weight: 500; text-align: right; }
+
+  /* ---- defense mode toggle ---- */
+  .card{
+    background: var(--bg-panel);
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    padding: 20px 22px;
+    margin-bottom: 20px;
+  }
+  .card-label{
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.09em;
+    color: var(--text-faint);
+    font-weight: 650;
+    margin-bottom: 14px;
+  }
+
+  .mode-switch{
+    display:grid;
+    grid-template-columns: 1fr 1fr;
+    background: var(--bg);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 4px;
+    position: relative;
+    gap: 4px;
+  }
+  .mode-opt{
+    position: relative;
+    z-index: 1;
+    border: none;
+    background: transparent;
+    color: var(--text-dim);
+    font-family: var(--sans);
+    font-size: 13.5px;
+    font-weight: 600;
+    padding: 12px 10px;
+    border-radius: 9px;
+    cursor: pointer;
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    gap: 2px;
+    transition: color .25s ease;
+  }
+  .mode-opt small{
+    font-family: var(--mono);
+    font-weight: 500;
+    font-size: 10.5px;
+    color: inherit;
+    opacity: .75;
+    letter-spacing: 0.01em;
+  }
+  .mode-opt.active{ color: #06110c; }
+  .mode-opt.active[data-mode="paranoid"]{ color: #180608; }
+  .mode-slider{
+    position: absolute;
+    top: 4px; bottom: 4px; left: 4px;
+    width: calc(50% - 6px);
+    background: var(--safe);
+    border-radius: 9px;
+    box-shadow: 0 0 18px rgba(35,255,176,0.4);
+    transition: transform .32s cubic-bezier(.65,0,.35,1), background .32s ease, box-shadow .32s ease;
+  }
+  .mode-switch.paranoid .mode-slider{
+    transform: translateX(calc(100% + 6px));
+    background: var(--warn);
+    box-shadow: 0 0 18px rgba(255,184,79,0.4);
+  }
+
+  .mode-hint{
+    margin-top: 12px;
+    font-size: 12px;
+    color: var(--text-dim);
+    line-height: 1.5;
+  }
+
+  /* ---- log table ---- */
+  .log-card{ padding: 0; overflow: hidden; }
+  .log-head{
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    padding: 18px 22px 14px;
+  }
+  .log-count{
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--text-faint);
+  }
+  table{ width:100%; border-collapse: collapse; }
+  thead th{
+    text-align:left;
+    font-size: 10.5px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-faint);
+    font-weight: 650;
+    padding: 0 22px 10px;
+    border-bottom: 1px solid var(--line);
+  }
+  tbody td{
+    padding: 12px 22px;
+    font-size: 13px;
+    border-bottom: 1px solid rgba(33,42,58,0.6);
+    vertical-align: middle;
+  }
+  tbody tr:last-child td{ border-bottom:none; }
+  tbody tr{ transition: background .2s ease; }
+  tbody tr:hover{ background: rgba(255,255,255,0.015); }
+  td.time{ font-family: var(--mono); color: var(--text-dim); font-size: 12px; white-space:nowrap; }
+  td.event{ color: var(--text); }
+  td.event span.detail{ display:block; color: var(--text-dim); font-size: 11.5px; margin-top:2px; }
+  .badge{
+    display:inline-flex;
+    align-items:center;
+    gap:5px;
+    font-family: var(--mono);
+    font-size: 10.5px;
+    font-weight: 600;
+    letter-spacing: 0.03em;
+    padding: 4px 9px;
+    border-radius: 100px;
+    text-transform: uppercase;
+    white-space: nowrap;
+  }
+  .badge::before{ content:''; width:5px; height:5px; border-radius:50%; background: currentColor; }
+  .badge.ok{ color: var(--safe); background: var(--safe-dim); }
+  .badge.info{ color: var(--accent); background: rgba(79,211,255,0.12); }
+  .badge.critical{ color: var(--critical); background: var(--critical-dim); }
+  .badge.warn{ color: var(--warn); background: rgba(255,184,79,0.12); }
+
+  .row-new{ animation: rowIn .5s ease; }
+  @keyframes rowIn{
+    from{ background: rgba(79,211,255,0.14); }
+    to{ background: transparent; }
+  }
+
+  footer{
+    text-align:center;
+    margin-top: 30px;
+    font-family: var(--mono);
+    font-size: 10.5px;
+    color: var(--text-faint);
+    letter-spacing: 0.04em;
+  }
+
+  @media (prefers-reduced-motion: reduce){
+    .ring-field.safe .buckle, .ring-field.critical .buckle,
+    .ring-echo, .mode-slider, .row-new{ animation: none !important; transition: none !important; }
+  }
+
+  @media (max-width: 480px){
+    .ring-field{ width: 176px; height: 176px; }
+    .buckle{ width: 136px; height: 136px; }
+    .status-headline{ font-size: 21px; text-align:center; }
+    thead th:nth-child(1), td.time{ display:none; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <div class="brand">
+      <div class="brand-mark">
+        <svg viewBox="0 0 24 24" fill="none"><path d="M12 2L4 5v6c0 5 3.4 8.4 8 9 4.6-.6 8-4 8-9V5l-8-3z" fill="#06110c"/></svg>
+      </div>
+      <div>
+        <div class="brand-name">CloudShield</div>
+        <div class="brand-tag">Digital Seatbelt</div>
+      </div>
+    </div>
+    <div class="conn-pill down" id="connPill">
+      <span class="conn-dot"></span>
+      <span id="connText">Connecting…</span>
+    </div>
+  </header>
+
+  <section class="status-hero">
+    <div class="ring-field safe" id="ringField">
+      <div class="ring-echo"></div>
+      <div class="ring-echo"></div>
+      <div class="buckle" id="buckle">
+        <svg class="buckle-icon" id="buckleIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
+          <path d="M12 2.5 4.5 5.8v5.4c0 5.1 3.2 8.7 7.5 10.3 4.3-1.6 7.5-5.2 7.5-10.3V5.8L12 2.5z"/>
+          <path id="buckleGlyph" d="m8.2 12.3 2.6 2.6 5-5.2" />
+        </svg>
+      </div>
+    </div>
+    <div class="status-headline safe" id="statusHeadline">Network Safe</div>
+    <div class="status-sub">Mode: <b id="statusMode">Smart Lock</b> · Last check <b id="statusTime">—</b></div>
+    <div class="threat-panel" id="threatPanel">
+      <div class="threat-row"><span>Threat</span><b id="threatName">—</b></div>
+      <div class="threat-row severity"><span>Severity</span><b id="threatSeverity">—</b></div>
+      <div class="threat-row"><span>Action Taken</span><b id="threatAction">—</b></div>
+      <div class="threat-row recommendation"><span>Recommendation</span><b id="threatRec">—</b></div>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="card-label">Defense Mode</div>
+    <div class="mode-switch" id="modeSwitch">
+      <div class="mode-slider"></div>
+      <button class="mode-opt active" data-mode="smart" id="optSmart">
+        Smart Lock
+        <small>ERP / Banking only</small>
+      </button>
+      <button class="mode-opt" data-mode="paranoid" id="optParanoid">
+        Paranoid Lock
+        <small>Strict airgap</small>
+      </button>
+    </div>
+    <p class="mode-hint" id="modeHint">Only sanctioned finance &amp; ERP traffic is locked down. Everything else on the network moves freely.</p>
+  </section>
+
+  <section class="card log-card">
+    <div class="log-head">
+      <div class="card-label" style="margin:0;">Recent Activity</div>
+      <div class="log-count"><span id="logCount">0</span> events</div>
+    </div>
+    <table>
+      <thead>
+        <tr>
+          <th style="width:78px;">Time</th>
+          <th>Event</th>
+          <th style="width:110px;">Status</th>
+        </tr>
+      </thead>
+      <tbody id="logBody"></tbody>
+    </table>
+  </section>
+
+  <footer>Polling /api/status every 2s · Simulated feed active while backend is offline</footer>
+</div>
+
+<script>
+(function(){
+  "use strict";
+
+  const API_URL = "http://localhost:3000/api/status";
+  const POLL_MS = 2000;
+
+  const el = {
+    ringField: document.getElementById('ringField'),
+    buckleGlyph: document.getElementById('buckleGlyph'),
+    headline: document.getElementById('statusHeadline'),
+    subMode: document.getElementById('statusMode'),
+    subTime: document.getElementById('statusTime'),
+    connPill: document.getElementById('connPill'),
+    connText: document.getElementById('connText'),
+    logBody: document.getElementById('logBody'),
+    logCount: document.getElementById('logCount'),
+    modeSwitch: document.getElementById('modeSwitch'),
+    optSmart: document.getElementById('optSmart'),
+    optParanoid: document.getElementById('optParanoid'),
+    modeHint: document.getElementById('modeHint'),
+    threatPanel: document.getElementById('threatPanel'),
+    threatName: document.getElementById('threatName'),
+    threatSeverity: document.getElementById('threatSeverity'),
+    threatAction: document.getElementById('threatAction'),
+    threatRec: document.getElementById('threatRec'),
+  };
+
+  const MODE_COPY = {
+    smart: "Only sanctioned finance & ERP traffic is locked down. Everything else on the network moves freely.",
+    paranoid: "All outbound connections are blocked by default. Nothing leaves this device unless it's explicitly allowed."
+  };
+
+  let defenseMode = "smart"; // 'smart' | 'paranoid'
+  let logs = [];
+  let eventSeq = 0;
+
+  function fmtTime(d){
+    return d.toLocaleTimeString([], { hour: '2-digit', minute:'2-digit', second:'2-digit' });
+  }
+
+  function setDefenseMode(mode){
+    defenseMode = mode;
+    el.modeSwitch.classList.toggle('paranoid', mode === 'paranoid');
+    el.optSmart.classList.toggle('active', mode === 'smart');
+    el.optParanoid.classList.toggle('active', mode === 'paranoid');
+    el.subMode.textContent = mode === 'smart' ? 'Smart Lock' : 'Paranoid Lock';
+    el.modeHint.textContent = MODE_COPY[mode];
+  }
+  el.optSmart.addEventListener('click', () => setDefenseMode('smart'));
+  el.optParanoid.addEventListener('click', () => setDefenseMode('paranoid'));
+
+  function addLogRow(entry, animate){
+    logs.unshift(entry);
+    logs = logs.slice(0, 12);
+    renderLogs(animate ? entry : null);
+  }
+
+  function badgeClass(level){
+    return { ok: 'ok', info: 'info', warn: 'warn', critical: 'critical' }[level] || 'info';
+  }
+  function badgeLabel(level){
+    return { ok: 'Blocked', info: 'Allowed', warn: 'Watching', critical: 'Critical' }[level] || level;
+  }
+
+  function renderLogs(justAdded){
+    el.logBody.innerHTML = '';
+    logs.forEach(entry => {
+      const tr = document.createElement('tr');
+      if (justAdded && entry === justAdded) tr.classList.add('row-new');
+      tr.innerHTML = `
+        <td class="time">${entry.time}</td>
+        <td class="event">${entry.title}${entry.detail ? `<span class="detail">${entry.detail}</span>` : ''}</td>
+        <td><span class="badge ${badgeClass(entry.level)}">${badgeLabel(entry.level)}</span></td>
+      `;
+      el.logBody.appendChild(tr);
+    });
+    el.logCount.textContent = logs.length;
+  }
+
+  // Glyph paths shown inside the buckle for each state
+  const GLYPH = {
+    SAFE: 'm8.2 12.3 2.6 2.6 5-5.2',                 // checkmark
+    HIGH: 'M12 8v5 M12 16.2v.2',                      // exclamation mark
+    CRITICAL: 'M9 9l6 6M15 9l-6 6'                    // X
+  };
+  const HEADLINE = {
+    SAFE: 'Network Safe',
+    HIGH: 'Elevated Risk: Monitoring',
+    CRITICAL: 'Threat Detected: Vault Locked'
+  };
+
+  let lastState = 'SAFE';
+
+  // state: 'SAFE' | 'HIGH' | 'CRITICAL'
+  // meta: optional { threat_type, details } from the sensor/actuator payload
+  function setStatus(state, meta){
+    meta = meta || {};
+    const isWarn = state === 'HIGH';
+    const isCritical = state === 'CRITICAL';
+    const isSafe = !isWarn && !isCritical;
+
+    el.ringField.classList.toggle('safe', isSafe);
+    el.ringField.classList.toggle('warn', isWarn);
+    el.ringField.classList.toggle('critical', isCritical);
+    el.headline.classList.toggle('safe', isSafe);
+    el.headline.classList.toggle('warn', isWarn);
+    el.headline.classList.toggle('critical', isCritical);
+    el.headline.textContent = HEADLINE[state] || HEADLINE.SAFE;
+    el.buckleGlyph.setAttribute('d', GLYPH[state] || GLYPH.SAFE);
+    el.subTime.textContent = fmtTime(new Date());
+
+    // Threat detail panel — only shown once something's actually going on
+    el.threatPanel.classList.toggle('visible', isWarn || isCritical);
+    el.threatPanel.classList.toggle('warn', isWarn);
+    el.threatPanel.classList.toggle('critical', isCritical);
+    if (isWarn || isCritical){
+      el.threatName.textContent = meta.threat_type || (isCritical ? 'Unknown Critical Threat' : 'Unknown Elevated Risk');
+      el.threatSeverity.textContent = state;
+      el.threatSeverity.className = isCritical ? 'critical' : 'warn';
+      el.threatAction.textContent = isCritical ? 'Firewall Activated' : 'Monitoring — not blocked';
+      el.threatRec.textContent = isCritical
+        ? 'Disconnect from this Wi-Fi immediately.'
+        : 'Stay alert. Avoid entering passwords or card details on this network.';
+    }
+
+    // Only log a new row when the state actually changes, so a steady
+    // CRITICAL/HIGH condition doesn't spam the table every 2s.
+    if (state !== lastState){
+      if (isCritical){
+        addLogRow({
+          time: fmtTime(new Date()),
+          title: meta.threat_type ? `Vault locked — ${meta.threat_type}` : 'Vault locked — suspicious egress blocked',
+          detail: meta.details || 'Unrecognized destination attempted contact with a protected process.',
+          level: 'critical'
+        }, true);
+      } else if (isWarn){
+        addLogRow({
+          time: fmtTime(new Date()),
+          title: meta.threat_type ? `Elevated risk — ${meta.threat_type}` : 'Elevated risk detected',
+          detail: meta.details || 'Monitoring closely. Traffic has not been blocked.',
+          level: 'warn'
+        }, true);
+      } else if (lastState !== 'SAFE'){
+        addLogRow({
+          time: fmtTime(new Date()),
+          title: 'Network Safe',
+          detail: 'Threat cleared. Normal monitoring resumed.',
+          level: 'ok'
+        }, true);
+      }
+    }
+    lastState = state;
+  }
+
+  function setConnected(ok){
+    el.connPill.classList.toggle('live', ok);
+    el.connPill.classList.toggle('down', !ok);
+    el.connText.textContent = ok ? 'Live' : 'Simulated';
+  }
+
+  // --- Simulated fallback feed -------------------------------------------
+  // Keeps the dashboard demoable at a hackathon even if localhost:3000
+  // isn't running yet. Real backend responses always take priority.
+  const SIM_EVENTS = [
+    { title: 'ERP session verified', detail: 'SAP client handshake matched trusted fingerprint.', level: 'ok' },
+    { title: 'Outbound DNS lookup allowed', detail: 'api.stripe.com — known banking endpoint.', level: 'ok' },
+    { title: 'New process opened a socket', detail: 'Flagged for passive monitoring.', level: 'info' },
+    { title: 'Unusual port scan pattern', detail: 'Rate-limited, no data left the device.', level: 'warn' },
+  ];
+  function simulateTick(){
+    // Rare critical spike so the flashing lockdown state is visible during a demo
+    if (Math.random() < 0.05){
+      setStatus('CRITICAL', { threat_type: 'ARP Spoofing / Man-in-the-Middle', details: 'Gateway MAC mismatch detected on eth0.' });
+      setTimeout(() => setStatus('SAFE'), 4500);
+      return;
+    }
+    // Slightly more common HIGH spike — visible but non-lockdown
+    if (Math.random() < 0.08){
+      setStatus('HIGH', { threat_type: 'Captive Portal Redirect', details: 'neverssl.com request was redirected — possible evil twin.' });
+      setTimeout(() => setStatus('SAFE'), 3500);
+      return;
+    }
+    if (Math.random() < 0.55){
+      const e = SIM_EVENTS[Math.floor(Math.random() * SIM_EVENTS.length)];
+      addLogRow({ time: fmtTime(new Date()), ...e }, true);
+    }
+    el.subTime.textContent = fmtTime(new Date());
+  }
+
+  // Normalizes whatever /api/status returns into one of 'SAFE' | 'HIGH' | 'CRITICAL'.
+  // Accepts either the sensor/actuator schema (severity: 'HIGH'|'CRITICAL')
+  // or a plain status field (status: 'SAFE'|'HIGH'|'CRITICAL').
+  function resolveState(data){
+    const raw = (data.severity || data.status || 'SAFE').toString().toUpperCase();
+    if (raw === 'CRITICAL') return 'CRITICAL';
+    if (raw === 'HIGH' || raw === 'WARN' || raw === 'WARNING') return 'HIGH';
+    return 'SAFE';
+  }
+
+  async function pollStatus(){
+    try {
+      const res = await fetch(API_URL, { cache: 'no-store' });
+      if (!res.ok) throw new Error('bad response');
+      const data = await res.json();
+
+      setConnected(true);
+      const state = resolveState(data);
+      setStatus(state, {
+        threat_type: data.threat_type,
+        details: data.details || data.message
+      });
+
+      if (Array.isArray(data.logs)){
+        data.logs.forEach(l => addLogRow({
+          time: l.time || fmtTime(new Date()),
+          title: l.title || l.event || l.threat_type || 'Event',
+          detail: l.detail || l.details || '',
+          level: l.level || (l.severity === 'CRITICAL' ? 'critical' : l.severity === 'HIGH' ? 'warn' : 'info')
+        }, false));
+      }
+    } catch (err){
+      // Backend not reachable (expected before the real API is wired up) —
+      // fall back to the simulated feed so the UI stays alive.
+      setConnected(false);
+      simulateTick();
+    }
+  }
+
+  // Seed a couple of rows so the table isn't empty on load
+  addLogRow({ time: fmtTime(new Date()), title: 'CloudShield initialized', detail: 'Baseline network policy loaded.', level: 'ok' }, false);
+  addLogRow({ time: fmtTime(new Date()), title: 'Smart Lock engaged', detail: 'Monitoring ERP & banking channels.', level: 'info' }, false);
+
+  setDefenseMode('smart');
+  pollStatus();
+  setInterval(pollStatus, POLL_MS);
+})();
+</script>
+</body>
+</html>
