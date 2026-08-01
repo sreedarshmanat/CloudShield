@@ -65,3 +65,30 @@ CloudShield/
 ├── eviltwin_attacker.py      # Simulated Evil Twin / Rogue AP attack tool
 ├── package.json              # Node dependencies configuration
 └── README.md                 # Project documentation
+⚙️ Setup & Installation
+Prerequisites
+Python 3 with Scapy (pip install scapy requests)
+
+Node.js & npm
+
+Root / Administrator privileges (required for packet sniffing and firewall rule manipulation)
+
+1. Start the Dashboard Backend
+Bash
+sudo node server.js
+2. Launch the Intrusion Detection Sensor
+Bash
+sudo python3 sensor_integration.py
+3. Run Attack Simulations
+ARP Spoofing Attack:
+
+Bash
+sudo python3 arp_attacker.py
+DNS Spoofing Attack:
+
+Bash
+sudo python3 dns_attacker.py
+Evil Twin Attack:
+
+Bash
+sudo python3 eviltwin_attacker.py
