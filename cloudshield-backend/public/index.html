@@ -223,6 +223,25 @@
   .threat-row.severity b.warn{ color: var(--warn); }
   .threat-row.recommendation b{ color: var(--text); font-family: var(--sans); font-weight: 500; text-align: right; }
 
+  .reset-btn {
+    width: 100%;
+    margin-top: 18px;
+    padding: 12px;
+    background: rgba(255, 59, 92, 0.15);
+    color: var(--critical);
+    border: 1px solid rgba(255, 59, 92, 0.4);
+    border-radius: 8px;
+    font-family: var(--sans);
+    font-weight: 600;
+    font-size: 13.5px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+  }
+  .reset-btn:hover {
+    background: var(--critical);
+    color: #fff;
+  }
+
   /* ---- defense mode toggle ---- */
   .card{
     background: var(--bg-panel);
@@ -418,8 +437,9 @@
     <div class="threat-panel" id="threatPanel">
       <div class="threat-row"><span>Threat</span><b id="threatName">—</b></div>
       <div class="threat-row severity"><span>Severity</span><b id="threatSeverity">—</b></div>
+      <div class="threat-row"><span>Details</span><b id="threatDetails">—</b></div>
       <div class="threat-row"><span>Action Taken</span><b id="threatAction">—</b></div>
-      <div class="threat-row recommendation"><span>Recommendation</span><b id="threatRec">—</b></div>
+      <button id="resetNetworkBtn" class="reset-btn">Clear Threat & Restore Internet</button>
     </div>
   </section>
 
@@ -484,7 +504,8 @@
     threatName: document.getElementById('threatName'),
     threatSeverity: document.getElementById('threatSeverity'),
     threatAction: document.getElementById('threatAction'),
-    threatRec: document.getElementById('threatRec'),
+    threatDetails: document.getElementById('threatDetails'),
+    resetBtn: document.getElementById('resetNetworkBtn'),
   };
 
   const MODE_COPY = {
@@ -581,9 +602,7 @@
       el.threatSeverity.textContent = state;
       el.threatSeverity.className = isCritical ? 'critical' : 'warn';
       el.threatAction.textContent = isCritical ? 'Firewall Activated' : 'Monitoring — not blocked';
-      el.threatRec.textContent = isCritical
-        ? 'Disconnect from this Wi-Fi immediately.'
-        : 'Stay alert. Avoid entering passwords or card details on this network.';
+      el.threatDetails.textContent = meta.details || 'No additional details provided.';
     }
 
     // Only log a new row when the state actually changes, so a steady
@@ -710,6 +729,18 @@
   setDefenseMode('smart');
   pollStatus();
   setInterval(pollStatus, POLL_MS);
+
+  // Reset Button Logic
+  el.resetBtn.addEventListener('click', async () => {
+    el.resetBtn.textContent = 'Flushing Firewall...';
+    try {
+      await fetch('http://localhost:3000/api/reset', { method: 'POST' });
+      pollStatus(); // Immediately fetch the new "SAFE" status
+    } catch(err) {
+      console.error("Reset failed:", err);
+    }
+    setTimeout(() => { el.resetBtn.textContent = 'Clear Threat & Restore Internet'; }, 1000);
+  });
 })();
 </script>
 </body>

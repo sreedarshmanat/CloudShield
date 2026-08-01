@@ -61,7 +61,7 @@ class FirewallActuator:
     that executes the appropriate native firewall command.
 
     Supported platforms:
-      - Linux   → iptables  (OUTPUT chain, DROP)
+      - Linux   → iptables  (INPUT & OUTPUT chains, DROP)
       - Windows → netsh advfirewall (outbound block rule)
       - macOS   → pfctl     (table-based block)
     """
@@ -91,10 +91,10 @@ class FirewallActuator:
 
     def block_ip(self, target_ip: str) -> bool:
         """
-        Execute a firewall command to DROP outbound traffic to `target_ip`.
+        Execute firewall commands to DROP traffic to/from `target_ip`.
 
         Returns:
-            True if the rule was applied successfully, False otherwise.
+            True if the rules were applied successfully, False otherwise.
         """
         dispatcher = {
             self.LINUX:   self._block_linux,
@@ -114,34 +114,44 @@ class FirewallActuator:
 
     def _block_linux(self, target_ip: str) -> bool:
         """
-        Append an iptables OUTPUT DROP rule for the target IP.
-
-        Requires root / sudo. The rule is appended (not inserted), so
-        it will be evaluated after any existing rules. For production,
-        consider inserting at the top of the chain.
+        Insert bi-directional iptables DROP rules (INPUT -s and OUTPUT -d)
+        for the target IP to guarantee complete blocking.
         """
         comment = f"cloudshield-block-{target_ip}"
-        cmd = [
+        
+        # Rule 1: Drop incoming packets from the threat IP
+        cmd_in = [
             "sudo", "iptables",
-            "-I", "OUTPUT","1",
+            "-I", "INPUT", "1",
+            "-s", target_ip,
+            "-j", "DROP",
+            "-m", "comment",
+            "--comment", comment,
+        ]
+        
+        # Rule 2: Drop outgoing packets to the threat IP (for ping/connection tests)
+        cmd_out = [
+            "sudo", "iptables",
+            "-I", "OUTPUT", "1",
             "-d", target_ip,
             "-j", "DROP",
             "-m", "comment",
             "--comment", comment,
         ]
+
         try:
-            result = subprocess.run(
-                cmd, capture_output=True, text=True, timeout=FIREWALL_TIMEOUT,
-            )
-            if result.returncode == 0:
-                logger.info("[LINUX] iptables DROP applied for %s", target_ip)
+            res_in = subprocess.run(cmd_in, capture_output=True, text=True, timeout=FIREWALL_TIMEOUT)
+            res_out = subprocess.run(cmd_out, capture_output=True, text=True, timeout=FIREWALL_TIMEOUT)
+
+            if res_in.returncode == 0 and res_out.returncode == 0:
+                logger.info("[LINUX] Bi-directional iptables DROP applied for %s", target_ip)
                 return True
-            stderr = result.stderr.strip()
-            # Detect common privilege errors
+            
+            stderr = res_in.stderr.strip() or res_out.stderr.strip()
             if "permission" in stderr.lower() or "sudo" in stderr.lower():
                 logger.error("[LINUX] Permission denied — run with sudo or configure sudoers NOPASSWD")
             else:
-                logger.error("[LINUX] iptables failed (rc=%d): %s", result.returncode, stderr)
+                logger.error("[LINUX] iptables failed: %s", stderr)
             return False
 
         except subprocess.TimeoutExpired:
@@ -160,12 +170,6 @@ class FirewallActuator:
     # ── Windows (netsh advfirewall) ────────────────────────────
 
     def _block_windows(self, target_ip: str) -> bool:
-        """
-        Add a netsh advfirewall outbound block rule for the target IP.
-
-        Requires Administrator privileges. The rule name includes the IP
-        so it can be uniquely identified and removed later.
-        """
         rule_name = f"CloudShield Block {target_ip}"
         cmd = [
             "netsh", "advfirewall", "firewall", "add", "rule",
@@ -205,13 +209,6 @@ class FirewallActuator:
     # ── macOS (pfctl) ─────────────────────────────────────────
 
     def _block_macos(self, target_ip: str) -> bool:
-        """
-        Add the target IP to a pf(4) table called `cloudshield_blocked`.
-
-        Requires root. The table must be referenced in a pf.conf anchor rule
-        for this to take effect. For hackathon scope, we add to the table
-        and log a reminder about pf.conf.
-        """
         add_cmd = [
             "sudo", "pfctl", "-t", "cloudshield_blocked", "-T", "add", target_ip,
         ]
@@ -244,36 +241,14 @@ class FirewallActuator:
 # 2. AlertBatchDispatcher — Background Threaded Batch Queue
 # ═══════════════════════════════════════════════════════════════
 class AlertBatchDispatcher(threading.Thread):
-    """
-    Daemon thread that accumulates alerts in a bounded deque and flushes
-    them as a single JSON batch to the Node.js backend every N seconds.
-
-    Key properties:
-      - deque(maxlen=50): When an item is appended to a full deque, the
-        *oldest* item is automatically evicted (FIFO). This is our memory
-        cap — no alert queue can ever exceed 50 items in RAM.
-      - threading.Lock: Protects the deque for concurrent access from the
-        sniffer main thread (enqueue) and this thread (drain/requeue).
-      - Event.wait(): Replaces time.sleep() so the thread can be stopped
-        promptly via stop().
-      - Failed POSTs are re-queued; if the queue is full, oldest are dropped.
-    """
-
     def __init__(self, backend_url: str = BACKEND_URL):
         super().__init__(daemon=True)
         self.backend_url = backend_url
-
-        # Bounded deque — maxlen enforces automatic FIFO eviction
         self._queue: deque = deque(maxlen=QUEUE_MAX_SIZE)
         self._lock = threading.Lock()
-
-        # Graceful shutdown signal (replaces bare time.sleep)
         self._stop_event = threading.Event()
-
-        # Stats counters
         self._dispatched = 0
         self._dropped = 0
-
         self.name = "AlertBatchDispatcher"
         self._log = logging.getLogger("CloudShield.Dispatcher")
 
@@ -282,13 +257,9 @@ class AlertBatchDispatcher(threading.Thread):
             backend_url, QUEUE_MAX_SIZE, FLUSH_INTERVAL_SEC,
         )
 
-    # ── Thread Lifecycle ────────────────────────────────────────
-
     def run(self) -> None:
-        """Main loop: wait N seconds → drain → POST → repeat."""
         self._log.info("Dispatcher thread STARTED — entering flush loop")
         while not self._stop_event.is_set():
-            # Event.wait() blocks but wakes immediately on stop() signal
             self._stop_event.wait(timeout=FLUSH_INTERVAL_SEC)
             if self._stop_event.is_set():
                 break
@@ -296,49 +267,29 @@ class AlertBatchDispatcher(threading.Thread):
         self._log.info("Dispatcher thread STOPPED")
 
     def stop(self) -> None:
-        """Signal stop + perform one final flush to drain remaining alerts."""
         self._stop_event.set()
-        self._flush()  # Best-effort final drain
+        self._flush()
         self._log.info(
             "Final dispatch stats | dispatched=%d | dropped=%d",
             self._dispatched, self._dropped,
         )
 
-    # ── Queue Operations ────────────────────────────────────────
-
     def enqueue(self, alert: dict) -> bool:
-        """
-        Thread-safe, non-blocking enqueue.
-
-        Returns True if the alert was added without eviction,
-        False if the queue was full and the oldest alert was
-        evicted (FIFO).
-        """
         with self._lock:
             prev_len = len(self._queue)
-            self._queue.append(alert)       # O(1) — may evict oldest
+            self._queue.append(alert)
             if len(self._queue) <= prev_len:
-                # Length didn't grow → deque was full → oldest evicted
                 self._dropped += 1
-                self._log.debug(
-                    "Queue FULL (%d/%d) — oldest alert evicted (FIFO)",
-                    QUEUE_MAX_SIZE, QUEUE_MAX_SIZE,
-                )
                 return False
             return True
 
     def _drain_queue(self) -> list:
-        """Atomically extract and clear all queued alerts."""
         with self._lock:
             batch = list(self._queue)
             self._queue.clear()
         return batch
 
     def _requeue_failed(self, batch: list) -> None:
-        """
-        Re-insert alerts that failed to POST. If the queue is full,
-        deque(maxlen) automatically drops the oldest items (FIFO).
-        """
         requeued = 0
         evicted = 0
         with self._lock:
@@ -350,16 +301,8 @@ class AlertBatchDispatcher(threading.Thread):
                 else:
                     requeued += 1
         self._dropped += evicted
-        if evicted:
-            self._log.warning(
-                "Requeue: %d requeued, %d evicted (FIFO) | cumulative_dropped=%d",
-                requeued, evicted, self._dropped,
-            )
-
-    # ── HTTP Flush ─────────────────────────────────────────────
 
     def _flush(self) -> None:
-        """Drain queue and POST as a single JSON batch."""
         batch = self._drain_queue()
         if not batch:
             return
@@ -381,30 +324,12 @@ class AlertBatchDispatcher(threading.Thread):
                     len(batch), self.backend_url, resp.status_code, self._dispatched,
                 )
             else:
-                self._log.warning(
-                    "Backend HTTP %d for batch of %d alert(s) — requeuing",
-                    resp.status_code, len(batch),
-                )
                 self._requeue_failed(batch)
 
-        except requests.exceptions.ConnectionError:
-            self._log.warning(
-                "Backend OFFLINE (%s) — requeuing %d alert(s)",
-                self.backend_url, len(batch),
-            )
+        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout):
             self._requeue_failed(batch)
-
-        except requests.exceptions.Timeout:
-            self._log.warning(
-                "Backend TIMEOUT — requeuing %d alert(s)", len(batch),
-            )
+        except Exception:
             self._requeue_failed(batch)
-
-        except Exception as exc:
-            self._log.error("Unexpected flush error: %s — requeuing", exc)
-            self._requeue_failed(batch)
-
-    # ── Stats ──────────────────────────────────────────────────
 
     def queue_size(self) -> int:
         with self._lock:
@@ -424,15 +349,6 @@ class AlertBatchDispatcher(threading.Thread):
 # 3. CloudShieldActuator — Main Facade (Singleton)
 # ═══════════════════════════════════════════════════════════════
 class CloudShieldActuator:
-    """
-    Singleton facade — the ONLY class the sensor should interact with.
-
-    Usage:
-        from actuator import get_actuator
-        actuator = get_actuator()
-        actuator.trigger("evil_twin", "critical", {"mac": "AA:BB:CC:DD:EE:FF"})
-    """
-
     _instance = None
     _initialized = False
 
@@ -454,8 +370,6 @@ class CloudShieldActuator:
             self.dispatcher.start()
             self._log.info("CloudShieldActuator READY — dispatcher running")
 
-    # ── Public API ─────────────────────────────────────────────
-
     def trigger(
         self,
         threat_type: str,
@@ -464,48 +378,25 @@ class CloudShieldActuator:
         source_ip: Optional[str] = None,
         target_ip: Optional[str] = None,
     ) -> None:
-        """
-        NON-BLOCKING trigger — safe to call from the tightest sniffing loop.
-
-        What happens:
-          1. Alert dict is appended to the bounded deque  (O(1), lock-protected).
-          2. If severity is critical/high AND source_ip is known, a daemon
-             thread is spawned to execute the firewall block command.
-          3. This method returns immediately — no I/O on the calling thread.
-
-        Args:
-            threat_type: "evil_twin", "arp_spoof", "rogue_ap", etc.
-            severity:    "critical", "high", "medium", "low"
-            details:     Dict with MAC, BSSID, channel, packet info, etc.
-            source_ip:   Attacker IP (used for firewall blocking).
-            target_ip:   Victim IP (logged but not blocked).
-        """
-        # Build the alert payload with a UTC ISO-8601 timestamp
         alert = {
             "timestamp":   datetime.now(timezone.utc).isoformat(),
             "threat_type": threat_type,
             "severity":    severity,
-            "details":     dict(details),  # defensive copy
+            "details":     dict(details),
             "source_ip":   source_ip,
             "target_ip":   target_ip,
         }
 
-        # Step 1: Enqueue for batch logging (non-blocking, O(1))
         self.dispatcher.enqueue(alert)
 
-        # Step 2: Asynchronous firewall block (spawn daemon thread)
-        # Only block for critical/high severity with a known source IP
-        if severity in ("critical", "high") and source_ip:
+        if severity in ("critical", "high", "CRITICAL", "HIGH") and source_ip:
             threading.Thread(
                 target=self._firewall_block_bg,
                 args=(source_ip, threat_type),
                 daemon=True,
             ).start()
 
-    # ── Internal Helpers ───────────────────────────────────────
-
     def _firewall_block_bg(self, target_ip: str, threat_type: str) -> None:
-        """Execute firewall block in a background daemon thread."""
         self._log.info(
             "Firewall block initiated for %s (threat=%s)", target_ip, threat_type,
         )
@@ -515,13 +406,9 @@ class CloudShieldActuator:
         else:
             self._log.warning("Firewall block FAILED → %s", target_ip)
 
-    # ── Lifecycle ─────────────────────────────────────────────
-
     def shutdown(self) -> None:
-        """Gracefully shut down — final flush + stats dump."""
         self._log.info("CloudShieldActuator shutting down...")
         self.dispatcher.stop()
-        self._log.info("Shutdown complete. Final stats: %s", self.dispatcher.stats())
 
     def get_stats(self) -> dict:
         return self.dispatcher.stats()
@@ -534,11 +421,6 @@ _global_actuator: Optional[CloudShieldActuator] = None
 
 
 def get_actuator() -> CloudShieldActuator:
-    """
-    Lazy singleton accessor — safe to call from any module.
-    The actuator initializes once and the dispatcher thread
-    starts on the first call.
-    """
     global _global_actuator
     if _global_actuator is None:
         _global_actuator = CloudShieldActuator(auto_start=True)
@@ -592,7 +474,6 @@ if __name__ == "__main__":
                 source_ip=f"192.168.1.{100 + i}",
             )
         print(f"[*] Queue depth: {actuator.get_stats()['queue_size']}")
-        print("[*] Alerts will flush in ~10s. Ctrl+C to exit.")
 
     if args.stats:
         try:
@@ -608,7 +489,6 @@ if __name__ == "__main__":
         except KeyboardInterrupt:
             pass
 
-    # If no flags given, just print help and exit
     if not any([args.test_firewall, args.test_alerts, args.stats]):
         parser.print_help()
 

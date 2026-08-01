@@ -7,6 +7,7 @@
  *   POST /api/alert      — Ingest batched threat alerts from actuator.py
  *   GET  /api/status     — Return system status + recent logs for dashboard polling
  *   GET  /api/health     — Liveness probe
+ *   POST /api/reset      — Flush Firewall & Clear Active Threats
  *
  * Database: SQLite3 in WAL journal mode for concurrent read/write safety.
  * Table   : ThreatLogs (id, timestamp, threat_type, severity, details, action_taken)
@@ -66,11 +67,6 @@ db.serialize(() => {
 // 2. Severity Normalization Utilities
 // ═══════════════════════════════════════════════════════════════
 
-/**
- * Normalize raw severity from the actuator (which sends lowercase
- * "critical"|"high"|"medium"|"low") into the three-tier system
- * the frontend expects: "CRITICAL" | "HIGH" | "SAFE".
- */
 function normalizeSeverity(raw) {
   const s = (raw || '').toString().toUpperCase().trim();
   if (s === 'CRITICAL') return 'CRITICAL';
@@ -78,31 +74,18 @@ function normalizeSeverity(raw) {
   return 'SAFE';  // "MEDIUM", "LOW", or anything else
 }
 
-/**
- * Determine the most dangerous severity from a list of severities.
- * Returns the highest: CRITICAL > HIGH > SAFE.
- */
 function worstSeverity(severities) {
   if (severities.includes('CRITICAL')) return 'CRITICAL';
   if (severities.includes('HIGH'))     return 'HIGH';
   return 'SAFE';
 }
 
-/**
- * Map normalized severity to the frontend's log `level` badge.
- *   CRITICAL → "critical"
- *   HIGH     → "warn"
- *   SAFE     → "info"
- */
 function severityToLevel(severity) {
   if (severity === 'CRITICAL') return 'critical';
   if (severity === 'HIGH')     return 'warn';
   return 'info';
 }
 
-/**
- * Determine action_taken based on severity and source_ip presence.
- */
 function deriveAction(severity, source_ip) {
   if (severity === 'CRITICAL' && source_ip) return 'Firewall DROP rule applied';
   if (severity === 'HIGH'     && source_ip) return 'Firewall DROP rule applied';
@@ -113,26 +96,6 @@ function deriveAction(severity, source_ip) {
 // 3. POST /api/alert — Batch Alert Ingestion
 // ═══════════════════════════════════════════════════════════════
 app.post('/api/alert', (req, res) => {
-  /*
-   * Expected payload from actuator.py:
-   * {
-   *   "alerts": [
-   *     {
-   *       "timestamp":   "2025-08-01T12:34:56.789Z",
-   *       "threat_type": "evil_twin",
-   *       "severity":    "critical",
-   *       "details":     { "attacker_mac": "AA:BB:...", "ssid": "..." },
-   *       "source_ip":   "192.168.1.100",
-   *       "target_ip":   "192.168.1.1"
-   *     },
-   *     ...
-   *   ]
-   * }
-   *
-   * CRITICAL: `details` is a dict from Python. We must JSON.stringify()
-   *           it before storing in SQLite TEXT column.
-   */
-
   const body = req.body;
   const alerts = body.alerts;
 
@@ -150,7 +113,6 @@ app.post('/api/alert', (req, res) => {
     db.run('BEGIN TRANSACTION');
 
     for (const alert of alerts) {
-      // JSON.stringify the details dict → TEXT for SQLite
       const detailsStr = typeof alert.details === 'object'
         ? JSON.stringify(alert.details)
         : String(alert.details || '');
@@ -183,34 +145,8 @@ app.post('/api/alert', (req, res) => {
 // 4. GET /api/status — Dashboard Polling Endpoint
 // ═══════════════════════════════════════════════════════════════
 app.get('/api/status', (req, res) => {
-  /*
-   * Returns the EXACT JSON contract the frontend's pollStatus() expects:
-   *
-   * {
-   *   "status":             "SAFE" | "HIGH" | "CRITICAL",
-   *   "severity":           "SAFE" | "HIGH" | "CRITICAL",
-   *   "threat_type":        string | null,       ← most recent non-safe alert
-   *   "details":            string | null,        ← human-readable summary
-   *   "total_records":      number,
-   *   "has_active_threats": boolean,
-   *   "logs": [
-   *     {
-   *       "time":   "HH:MM:SS",
-   *       "title":  string (threat_type),
-   *       "detail": string (details + action_taken),
-   *       "level":  "ok" | "info" | "warn" | "critical"
-   *     }
-   *   ]
-   * }
-   *
-   * Query params:
-   *   ?limit=N     — max log rows (default 20)
-   *   ?since=ISO   — only return logs newer than this ISO timestamp
-   */
-
   const limit = Math.min(Math.max(parseInt(req.query.limit) || DEFAULT_LIMIT, 1), 100);
 
-  // Build query with optional ?since= filter for deduplication
   let baseSql = `
     SELECT id, timestamp, threat_type, severity, details, action_taken
     FROM ThreatLogs
@@ -231,7 +167,6 @@ app.get('/api/status', (req, res) => {
       return res.status(500).json({ error: 'Database read failed' });
     }
 
-    // ── Count total records (separate lightweight query) ────
     db.get('SELECT COUNT(*) as cnt FROM ThreatLogs', (err2, countRow) => {
       if (err2) {
         console.error('[GET /api/status] Count error:', err2.message);
@@ -240,9 +175,6 @@ app.get('/api/status', (req, res) => {
 
       const totalRecords = countRow ? countRow.cnt : 0;
 
-      // ── Determine overall system severity ────────────────
-      // Scan ALL rows to find the worst severity among recent alerts
-      // (limited to last 50 for performance)
       db.all(
         'SELECT severity, threat_type, details, action_taken, timestamp FROM ThreatLogs ORDER BY id DESC LIMIT 50',
         [],
@@ -252,21 +184,28 @@ app.get('/api/status', (req, res) => {
             return res.status(500).json({ error: 'Database recent scan failed' });
           }
 
-          const severities = recentRows.map(r => r.severity);
-          const systemSeverity = worstSeverity(severities);
+          // ── EVALUATE SYSTEM SEVERITY ──
+          let systemSeverity = 'SAFE';
+          let latestThreat = null;
 
-          // Find the most recent CRITICAL or HIGH alert for top-level metadata
-          const latestThreat = recentRows.find(
-            r => r.severity === 'CRITICAL' || r.severity === 'HIGH'
-          );
+          // Scan from newest to oldest
+          for (const row of recentRows) {
+            if (row.threat_type === 'System Reset') {
+              // If we hit a reset log before any threat, the system is clear!
+              break; 
+            }
+            if (row.severity === 'CRITICAL' || row.severity === 'HIGH') {
+              // We found an active threat that hasn't been reset yet
+              systemSeverity = row.severity;
+              latestThreat = row;
+              break; 
+            }
+          }
 
-          // ── Build log entries (reverse to chronological) ──
           const logs = rows.reverse().map(row => {
-            // Parse the details string back to extract a human-readable summary
             let detailText = row.details || '';
             try {
               const parsed = JSON.parse(detailText);
-              // Build a readable summary from the dict keys
               const parts = [];
               if (parsed.attacker_ip)  parts.push(`Attacker: ${parsed.attacker_ip}`);
               if (parsed.attacker_mac) parts.push(`MAC: ${parsed.attacker_mac}`);
@@ -280,12 +219,10 @@ app.get('/api/status', (req, res) => {
               // details was already a plain string, keep it as-is
             }
 
-            // Append action_taken to the detail string
             if (row.action_taken && row.action_taken !== 'Logged — monitoring') {
               detailText += ` [${row.action_taken}]`;
             }
 
-            // Format time as HH:MM:SS from the ISO timestamp
             let timeStr = '';
             try {
               const d = new Date(row.timestamp);
@@ -312,7 +249,11 @@ app.get('/api/status', (req, res) => {
               const parts = [];
               if (parsed.attacker_ip)  parts.push(`Source IP: ${parsed.attacker_ip}`);
               if (parsed.attacker_mac) parts.push(`MAC: ${parsed.attacker_mac}`);
+              if (parsed.ssid)         parts.push(`SSID: ${parsed.ssid}`);
+              if (parsed.bssid)        parts.push(`BSSID: ${parsed.bssid}`);
+              if (parsed.spoofed_domain) parts.push(`Target: ${parsed.spoofed_domain}`);
               if (parsed.reason)       parts.push(parsed.reason);
+              
               if (parts.length > 0) topLevelDetail = parts.join(' · ');
               else topLevelDetail = latestThreat.details;
             } catch (_) {
@@ -320,7 +261,6 @@ app.get('/api/status', (req, res) => {
             }
           }
 
-          // ── Compose final response ────────────────────────
           const response = {
             status:              systemSeverity,
             severity:            systemSeverity,
@@ -355,6 +295,30 @@ app.get('/api/health', (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════
+// NEW POST /api/reset — Flush Firewall & Clear Active Threats
+// ═══════════════════════════════════════════════════════════════
+app.post('/api/reset', (req, res) => {
+  const { exec } = require('child_process');
+
+  // Run the flush command on the OS
+  exec('sudo iptables -F', (error, stdout, stderr) => {
+    if (error) {
+      console.error(`[FIREWALL ERROR] ${error.message}`);
+      return res.status(500).json({ error: 'Failed to flush firewall' });
+    }
+
+    // Insert a "SAFE" log to instantly turn the dashboard green again
+    db.run(`
+      INSERT INTO ThreatLogs (timestamp, threat_type, severity, details, action_taken)
+      VALUES (?, 'System Reset', 'SAFE', 'Admin flushed firewall and restored connectivity.', 'Firewall flushed')
+    `, [new Date().toISOString()], (dbErr) => {
+      console.log('[FIREWALL] Successfully flushed iptables. System SAFE.');
+      res.json({ status: 'ok', message: 'Network restored' });
+    });
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════
 // 6. Static File Serving (serve index.html from public/)
 // ═══════════════════════════════════════════════════════════════
 app.use(express.static(path.join(__dirname, 'public')));
@@ -368,6 +332,7 @@ app.listen(PORT, () => {
   console.log(`  API:    http://localhost:${PORT}/api/status`);
   console.log(`  Health: http://localhost:${PORT}/api/health`);
   console.log(`  Alert:  POST http://localhost:${PORT}/api/alert`);
+  console.log(`  Reset:  POST http://localhost:${PORT}/api/reset`);
   console.log('═══════════════════════════════════════════════════');
 });
 
