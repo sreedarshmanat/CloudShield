@@ -123,7 +123,7 @@ class FirewallActuator:
         comment = f"cloudshield-block-{target_ip}"
         cmd = [
             "sudo", "iptables",
-            "-A", "OUTPUT",
+            "-I", "OUTPUT","1",
             "-d", target_ip,
             "-j", "DROP",
             "-m", "comment",
